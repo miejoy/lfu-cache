@@ -70,20 +70,33 @@ public final class LFUCache {
         
     }
     
+    // MARK: - Set
+    
     public func set(key: String, to value:Any) {
+        setex(key: key, to: value, in: 0)
+    }
+    
+    public func setex(key: String, to value:Any, in timeout: Int) {
         
         defer {
             // 这里加 count，主要是为了方便过期
             addCount(key: key, count: 0)
         }
         
+        var expiredTime : Date? = nil
+        if timeout > 0 {
+            expiredTime = Date().addingTimeInterval(TimeInterval(timeout))
+        }
+        
         // set 不增加count
         if let node = dicContent[key] {
             node.content = value
+            node.expiredTime = expiredTime
             return
         }
         // 新建node
         let newNode = ContentNode(key:key, content: value, count: dicCount[key])
+        newNode.expiredTime = expiredTime
         self.arrContent.append(node: newNode)
         self.dicContent[key] = newNode
         
@@ -94,6 +107,8 @@ public final class LFUCache {
         }
     }
     
+    // MARK: - Get
+    
     public func get<T>(key: String, as type: T.Type = T.self) -> T? {
         
         defer {
@@ -102,7 +117,13 @@ public final class LFUCache {
         }
         
         if let node = dicContent[key] {
-            return node.content as? T
+            let expiredTime = node.expiredTime
+            if expiredTime == nil || expiredTime! > Date() {
+                return node.content as? T
+            } else {
+                // 删除节点
+                delete(key: key)
+            }
         }
         
         return nil
@@ -232,6 +253,8 @@ public final class LFUCache {
         
         var prev : ContentNode? = nil
         var next : ContentNode? = nil
+        
+        var expiredTime : Date?
         
         init(key: String, content: Any, count: Int? = 0) {
             self.key = key

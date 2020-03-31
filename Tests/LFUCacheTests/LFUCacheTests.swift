@@ -162,6 +162,19 @@ final class LFUCacheTests: XCTestCase {
         
     }
     
+    func testSetex() {
+        
+        let cache = LFUCache(countLimit: 5, duration: 1000)
+        
+        let key = "1"
+        let timeout = 2
+        cache.setex(key: key, to: 1, in: timeout)
+        XCTAssertNotNil(cache.get(key: key, as: Int.self))
+        sleep(UInt32(timeout))
+        XCTAssertNil(cache.get(key: key, as: Int.self))
+        XCTAssertNil(cache.dicContent[key])
+    }
+    
     static var allTests = [
         ("testContentNodes", testContentNodes),
     ]
