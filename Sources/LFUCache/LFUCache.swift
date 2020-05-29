@@ -6,11 +6,15 @@
 //
 
 import Foundation
+import NIO
 
 public final class LFUCache {
     
     /// count 记录，最多不会超过 countLimit * countRate^countRecordLevel  + countLimit * countRate^(countRecordLevel-1)  + ... + countLimit * countRate
     static var countRate = 10
+    
+    /// 线程
+    var loop : EventLoop
     
     /// 最大缓存限制
     var countLimit : Int
@@ -33,7 +37,7 @@ public final class LFUCache {
     /// 一级最近记录
     var lastCountRecord : CountRecord
     
-    public init(countLimit: Int, duration: TimeInterval, countRecordLevel : Int = 3) {
+    public init(loop: EventLoop, countLimit: Int, duration: TimeInterval, countRecordLevel : Int = 3) {
         
         defer {
             for index in 0..<(self.arrCountRecord.count-1) {
@@ -53,6 +57,7 @@ public final class LFUCache {
             }
         }
         
+        self.loop = loop
         self.countLimit = countLimit
         self.duration = duration
         self.countRecordLevel = countRecordLevel >= 1 ? countRecordLevel : 3
@@ -78,74 +83,81 @@ public final class LFUCache {
     
     public func setex(key: String, to value:Any, in timeout: Int) {
         
-        defer {
-            // 这里加 count，主要是为了方便过期
-            addCount(key: key, count: 0)
-        }
+        loop.execute {
         
-        var expiredTime : Date? = nil
-        if timeout > 0 {
-            expiredTime = Date().addingTimeInterval(TimeInterval(timeout))
-        }
-        
-        // set 不增加count
-        if let node = dicContent[key] {
-            node.content = value
-            node.expiredTime = expiredTime
-            return
-        }
-        // 新建node
-        let newNode = ContentNode(key:key, content: value, count: dicCount[key])
-        newNode.expiredTime = expiredTime
-        self.arrContent.append(node: newNode)
-        self.dicContent[key] = newNode
-        
-        // 判断是否 count 溢出
-        if self.dicContent.count > countLimit,
-            let aNode = self.arrContent.popLast() {
-            self.dicContent.removeValue(forKey: aNode.key)
+            defer {
+                // 这里加 count，主要是为了方便过期
+                self.addCount(key: key, count: 0)
+            }
+            
+            var expiredTime : Date? = nil
+            if timeout > 0 {
+                expiredTime = Date().addingTimeInterval(TimeInterval(timeout))
+            }
+            
+            // set 不增加count
+            if let node = self.dicContent[key] {
+                node.content = value
+                node.expiredTime = expiredTime
+                return
+            }
+            // 新建node
+            let newNode = ContentNode(key:key, content: value, count: self.dicCount[key])
+            newNode.expiredTime = expiredTime
+            self.arrContent.append(node: newNode)
+            self.dicContent[key] = newNode
+            
+            // 判断是否 count 溢出
+            if self.dicContent.count > self.countLimit,
+                let aNode = self.arrContent.popLast() {
+                self.dicContent.removeValue(forKey: aNode.key)
+            }
         }
     }
     
     // MARK: - Get
     
-    public func get<T>(key: String, as type: T.Type = T.self) -> T? {
+    public func get<T>(key: String, as type: T.Type = T.self) -> EventLoopFuture<T?> {
         
-        defer {
-            // 添加计数
-            addCount(key: key, count: 1)
-        }
-        
-        if let node = dicContent[key] {
-            let expiredTime = node.expiredTime
-            if expiredTime == nil || expiredTime! > Date() {
-                return node.content as? T
-            } else {
-                // 删除节点
-                delete(key: key)
+        return loop.submit { () -> T? in
+            defer {
+                // 添加计数
+                self.addCount(key: key, count: 1)
             }
+            
+            if let node = self.dicContent[key] {
+                let expiredTime = node.expiredTime
+                if expiredTime == nil || expiredTime! > Date() {
+                    return node.content as? T
+                } else {
+                    // 删除节点
+                    self.delete(key: key)
+                }
+            }
+            
+            return nil
         }
-        
-        return nil
     }
     
     
     public func delete(key: String) {
         
-        guard let node = dicContent[key] else {
-            return
+        loop.execute {
+            guard let node = self.dicContent[key] else {
+                return
+            }
+            
+            // 最后一个
+            if node.next == nil {
+                self.arrContent.lastNode = node.prev
+            }
+            
+            self.dicContent.removeValue(forKey: node.key)
+            node.prev?.next = node.next
+            node.next?.prev = node.prev
+            node.prev = nil
+            node.next = nil
         }
-        
-        // 最后一个
-        if node.next == nil {
-            self.arrContent.lastNode = node.prev
-        }
-        
-        dicContent.removeValue(forKey: node.key)
-        node.prev?.next = node.next
-        node.next?.prev = node.prev
-        node.prev = nil
-        node.next = nil
     }
     
     // MARK: - Count
