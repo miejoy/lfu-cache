@@ -7,6 +7,7 @@
 
 import Foundation
 import NIO
+import _NIOConcurrency
 
 public final class LFUCache {
     
@@ -137,6 +138,31 @@ public final class LFUCache {
             
             return nil
         }
+    }
+    
+    @available(macOS 12, iOS 15, watchOS 8, tvOS 15, *)
+    public func get<T>(key: String, as type: T.Type = T.self) async -> T? {
+        
+        let future = loop.submit { () -> T? in
+            defer {
+                // 添加计数
+                self.addCount(key: key, count: 1)
+            }
+            
+            if let node = self.dicContent[key] {
+                let expiredTime = node.expiredTime
+                if expiredTime == nil || expiredTime! > Date() {
+                    return node.content as? T
+                } else {
+                    // 删除节点
+                    self.delete(key: key)
+                }
+            }
+            
+            return nil
+        }
+        
+        return try? await future.get();
     }
     
     

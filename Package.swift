@@ -14,7 +14,7 @@ let package = Package(
     dependencies: [
         // Dependencies declare other packages that this package depends on.
         // .package(url: /* package url */, from: "1.0.0"),
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.13.1"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.32.1"),
     ],
     targets: [
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.
@@ -23,10 +23,12 @@ let package = Package(
             name: "LFUCache",
             dependencies: [
                 .product(name: "NIO", package: "swift-nio"),
+                .product(name: "_NIOConcurrency", package: "swift-nio"),
             ]
         ),
         .testTarget(
             name: "LFUCacheTests",
             dependencies: ["LFUCache"]),
-    ]
+    ],
+    swiftLanguageVersions: [.v5]
 )
