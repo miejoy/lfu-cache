@@ -2,14 +2,7 @@ import XCTest
 import NIO
 @testable import LFUCache
 
-@available(macOS 12, iOS 15, watchOS 8, tvOS 15, *)
-extension EventLoop {
-    func allCompleted() async throws {
-        try await self.submit{()}.get()
-    }
-}
 
-@available(macOS 12, iOS 15, watchOS 8, tvOS 15, *)
 final class LFUCacheTests: XCTestCase {
     
     var loop : EventLoop {
@@ -19,14 +12,14 @@ final class LFUCacheTests: XCTestCase {
         return group.next()
     }
     
-    func testContentNodes() async throws {
+    func testContentNodes() throws {
         
         let cache = LFUCache(loop: self.loop, countLimit: 10, duration: 1000)
         for i in 0...10 {
             cache.set(key: "\(i)", to: i)
         }
         
-        try await self.loop.allCompleted()
+        _ = try cache.get(key: "\(0)", as: Int.self).wait()
         
         XCTAssertNotNil(cache.arrContent.lastNode)
         var aNode = cache.arrContent.lastNode
@@ -196,19 +189,6 @@ final class LFUCacheTests: XCTestCase {
         cache.loop.execute {
              XCTAssertNil(cache.dicContent[key])
         }
-    }
-    
-    func testGetAsync() async throws {
-        
-        let cache = LFUCache(loop: self.loop, countLimit: 5, duration: 1000)
-        
-        let key = "key";
-        let value = 1;
-        cache.set(key: key, to: value);
-        
-        let result = await cache.get(key: key, as: type(of: value));
-        
-        XCTAssertEqual(result, value);
     }
     
     static var allTests = [
