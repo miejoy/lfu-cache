@@ -9,17 +9,13 @@ import XCTest
 import NIO
 @testable import LFUCache
 
-#if compiler(>=5.5) && canImport(_Concurrency)
 
-@available(macOS 12, iOS 15, watchOS 8, tvOS 15, *)
 extension EventLoop {
     func allCompleted() async throws {
         try await self.submit{()}.get()
     }
 }
 
-
-@available(macOS 12, iOS 15, watchOS 8, tvOS 15, *)
 final class AsyncLFUCacheTests: XCTestCase {
     
     var loop : EventLoop {
@@ -65,5 +61,3 @@ final class AsyncLFUCacheTests: XCTestCase {
         ("testContentNodes", testContentNodes),
     ]
 }
-
-#endif
