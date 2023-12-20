@@ -16,7 +16,6 @@ extension LFUCache {
 //        setex(key: key, to: value, in: 0)
 //    }
 
-    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
     public func setex(key: String, to value:Any, in timeout: Int) async throws {
         try await loop.submit {
             defer {
@@ -51,7 +50,6 @@ extension LFUCache {
 
     // MARK: - Get
 
-    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
     public func get<T>(key: String, as type: T.Type = T.self) async throws -> T? {
         return try await loop.submit { () -> T? in
             defer {
