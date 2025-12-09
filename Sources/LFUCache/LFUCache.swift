@@ -8,14 +8,23 @@
 import Foundation
 import NIO
 
-public final class LFUCache {
+@globalActor
+public actor CacheActor: GlobalActor {
+    // 指定全局隔离域的载体：一个单例 Actor
+    public static var shared: some Actor = CacheActor()
+}
+
+@CacheActor
+class Test {
+    
+}
+
+@CacheActor
+public class LFUCache: Sendable {
     
     /// count 记录，最多不会超过 countLimit * countRate^countRecordLevel  + countLimit * countRate^(countRecordLevel-1)  + ... + countLimit * countRate
     static var countRate = 10
-    
-    /// 线程
-    var loop : EventLoop
-    
+        
     /// 最大缓存限制
     var countLimit : Int
     
@@ -37,27 +46,7 @@ public final class LFUCache {
     /// 一级最近记录
     var lastCountRecord : CountRecord
     
-    public init(loop: EventLoop, countLimit: Int, duration: TimeInterval, countRecordLevel : Int = 3) {
-        
-        defer {
-            for index in 0..<(self.arrCountRecord.count-1) {
-                let aCountRecord = self.arrCountRecord[index]
-                let nextCountRecord = self.arrCountRecord[index+1]
-                aCountRecord.addFullDumpBlock { (arr) in
-                    for item in arr {
-                        nextCountRecord.addRecord(item)
-                    }
-                }
-            }
-            let oldCountRecord = self.arrCountRecord.last!
-            oldCountRecord.addFullSpillBlock {  arr in
-                for item in arr {
-                    self.reduceCount(key: item.1, count: item.2)
-                }
-            }
-        }
-        
-        self.loop = loop
+    public init(countLimit: Int, duration: TimeInterval, countRecordLevel : Int = 3) {
         self.countLimit = countLimit
         self.duration = duration
         self.countRecordLevel = countRecordLevel >= 1 ? countRecordLevel : 3
@@ -72,7 +61,25 @@ public final class LFUCache {
             self.arrCountRecord.insert(aCountRecord, at: 0)
         }
         self.lastCountRecord = self.arrCountRecord.first!
-        
+        self.config()
+    }
+    
+    func config() {
+        for index in 0..<(self.arrCountRecord.count-1) {
+            let aCountRecord = self.arrCountRecord[index]
+            let nextCountRecord = self.arrCountRecord[index+1]
+            aCountRecord.addFullDumpBlock { (arr) in
+                for item in arr {
+                    nextCountRecord.addRecord(item)
+                }
+            }
+        }
+        let oldCountRecord = self.arrCountRecord.last!
+        oldCountRecord.addFullSpillBlock { arr in
+            for item in arr {
+                self.reduceCount(key: item.1, count: item.2)
+            }
+        }
     }
     
     // MARK: - Set
@@ -82,80 +89,71 @@ public final class LFUCache {
     }
     
     public func setex(key: String, to value:Any, in timeout: Int) {
+        defer {
+            // 这里加 count，主要是为了方便过期
+            self.addCount(key: key, count: 0)
+        }
         
-        loop.execute {
+        var expiredTime : Date? = nil
+        if timeout > 0 {
+            expiredTime = Date().addingTimeInterval(TimeInterval(timeout))
+        }
         
-            defer {
-                // 这里加 count，主要是为了方便过期
-                self.addCount(key: key, count: 0)
-            }
-            
-            var expiredTime : Date? = nil
-            if timeout > 0 {
-                expiredTime = Date().addingTimeInterval(TimeInterval(timeout))
-            }
-            
-            // set 不增加count
-            if let node = self.dicContent[key] {
-                node.content = value
-                node.expiredTime = expiredTime
-                return
-            }
-            // 新建node
-            let newNode = ContentNode(key:key, content: value, count: self.dicCount[key])
-            newNode.expiredTime = expiredTime
-            self.arrContent.append(node: newNode)
-            self.dicContent[key] = newNode
-            
-            // 判断是否 count 溢出
-            if self.dicContent.count > self.countLimit,
-                let aNode = self.arrContent.popLast() {
-                self.dicContent.removeValue(forKey: aNode.key)
-            }
+        // set 不增加count
+        if let node = self.dicContent[key] {
+            node.content = value
+            node.expiredTime = expiredTime
+            return
+        }
+        // 新建node
+        let newNode = ContentNode(key:key, content: value, count: self.dicCount[key])
+        newNode.expiredTime = expiredTime
+        self.arrContent.append(node: newNode)
+        self.dicContent[key] = newNode
+        
+        // 判断是否 count 溢出
+        if self.dicContent.count > self.countLimit,
+            let aNode = self.arrContent.popLast() {
+            self.dicContent.removeValue(forKey: aNode.key)
         }
     }
     
     // MARK: - Get
     
-    public func get<T>(key: String, as type: T.Type = T.self) -> EventLoopFuture<T?> {
-        
-        return loop.submit { () -> T? in
-            defer {
-                // 添加计数
-                self.addCount(key: key, count: 1)
-            }
-            
-            if let node = self.dicContent[key] {
-                let expiredTime = node.expiredTime
-                if expiredTime == nil || expiredTime! > Date() {
-                    return node.content as? T
-                } else {
-                    // 删除节点
-                    self.delete(key: key)
-                }
-            }
-            
-            return nil
+    public func get<T>(key: String, as type: T.Type = T.self) -> T? {
+        defer {
+            // 添加计数
+            self.addCount(key: key, count: 1)
         }
+        
+        if let node = self.dicContent[key] {
+            let expiredTime = node.expiredTime
+            if expiredTime == nil || expiredTime! > Date() {
+                return node.content as? T
+            } else {
+                // 删除节点
+                self.delete(key: key)
+            }
+        }
+        
+        return nil
     }
     
     public func delete(key: String) {
-        loop.execute {
-            guard let node = self.dicContent[key] else {
-                return
-            }
-            
-            // 最后一个
-            if node.next == nil {
-                self.arrContent.lastNode = node.prev
-            }
-            
-            self.dicContent.removeValue(forKey: node.key)
-            node.prev?.next = node.next
-            node.next?.prev = node.prev
-            node.prev = nil
-            node.next = nil
+        guard let node = self.dicContent[key] else {
+            return
         }
+        
+        // 最后一个
+        if node.next == nil {
+            self.arrContent.lastNode = node.prev
+        }
+        
+        self.dicContent.removeValue(forKey: node.key)
+        node.prev?.next = node.next
+        node.next?.prev = node.prev
+        node.prev = nil
+        node.next = nil
     }
     
     // MARK: - Count
@@ -255,8 +253,8 @@ public final class LFUCache {
     // MARK: - ContentNode
     
     /// 内容节点，用于保存内容的节点
+    @CacheActor
     final class ContentNode {
-        
         var key : String
         var content : Any
         var count : Int = 0
@@ -273,6 +271,7 @@ public final class LFUCache {
         }
     }
     
+    @CacheActor
     final class NodeList {
         var lastNode : ContentNode?
         
@@ -323,7 +322,8 @@ public final class LFUCache {
     // MARK: - CountRecord
     
     /// 次数记录，用于记录一段时间内的访问记录
-    final class CountRecord : CustomStringConvertible {
+    @CacheActor
+    class CountRecord {
         let limit : Int
         let duration : TimeInterval
         var arrRecord = [(Date, String, Int)]()

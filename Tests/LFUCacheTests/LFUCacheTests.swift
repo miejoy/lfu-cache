@@ -1,146 +1,153 @@
-import XCTest
+//
+//  LFUCacheTests.swift
+//
+//
+//  Created by 黄磊 on 2022/3/20.
+//
+
+
+import Testing
 import NIO
 @testable import LFUCache
 
-
-final class LFUCacheTests: XCTestCase {
+@CacheActor
+@Suite
+struct LFUCacheTests {
     
-    var loop : EventLoop {
-        
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        
-        return group.next()
-    }
-    
+    @Test
     func testContentNodes() throws {
         
-        let cache = LFUCache(loop: self.loop, countLimit: 10, duration: 1000)
+        let cache = LFUCache(countLimit: 10, duration: 1000)
         for i in 0...10 {
             cache.set(key: "\(i)", to: i)
         }
         
-        _ = try cache.get(key: "\(0)", as: Int.self).wait()
+        _ = cache.get(key: "\(0)", as: Int.self)
         
-        XCTAssertNotNil(cache.arrContent.lastNode)
+        #expect(cache.arrContent.lastNode != nil)
         var aNode = cache.arrContent.lastNode
         var index = 1
         while aNode != nil, index <= 9 {
-            XCTAssertEqual(aNode!.content as! Int, index)
+            #expect((aNode!.content as! Int) == index)
             aNode = aNode?.prev
             index += 1
         }
     }
     
+    @Test
     func testContentNodesWithGet() throws {
         
         let maxCount = 5
         
         for getIndex in 1...maxCount {
-            let cache = LFUCache(loop: self.loop, countLimit: maxCount, duration: 1000)
+            let cache = LFUCache(countLimit: maxCount, duration: 1000)
             for i in 0...maxCount {
                 cache.set(key: "\(i)", to: i)
             }
-            _ = try cache.get(key: "\(getIndex)", as: Int.self).wait()
-            XCTAssertNotNil(cache.arrContent.lastNode)
+            _ = cache.get(key: "\(getIndex)", as: Int.self)
+            #expect(cache.arrContent.lastNode != nil)
             var index = 1
             var aNode = cache.arrContent.lastNode
             while aNode != nil, index < maxCount {
                 if index < getIndex {
-                    XCTAssertEqual(aNode!.content as! Int, index)
+                    #expect((aNode!.content as! Int) == index)
                 } else {
-                    XCTAssertEqual(aNode!.content as! Int, index + 1)
+                    #expect((aNode!.content as! Int) == index + 1)
                 }
                 aNode = aNode?.prev
                 index += 1
             }
-            XCTAssertEqual(aNode!.content as! Int, getIndex)
+            #expect((aNode!.content as! Int) == getIndex)
         }
     }
     
     
-    
+    @Test
     func testCoutSpillOld() throws {
         
-        let cache = LFUCache(loop: self.loop, countLimit: 10, duration: 1000)
+        let cache = LFUCache(countLimit: 10, duration: 1000)
         for i in 0...10 {
             cache.set(key: "\(i)", to: i)
         }
         // 0 被溢出
-        XCTAssertNil(try cache.get(key: "0", as: Int.self).wait())
-        XCTAssertEqual(try cache.get(key: "1", as: Int.self).wait(), 1)
+        #expect(cache.get(key: "0", as: Int.self) == nil)
+        #expect(cache.get(key: "1", as: Int.self) == 1)
         // 因为 1 加了次数，所以这个 set 导致 2 溢出
         cache.set(key: "11", to: 11)
-        XCTAssertNil(try cache.get(key: "2", as: Int.self).wait())
+        #expect(cache.get(key: "2", as: Int.self) == nil)
     }
     
+    @Test
     func testCoutSpillLessUsed() throws {
         
-        let cache = LFUCache(loop: self.loop, countLimit: 10, duration: 1000)
+        let cache = LFUCache(countLimit: 10, duration: 1000)
         for i in 0...10 {
             let key = "\(i)"
             for _ in 0...i {
-                _ = try cache.get(key: key, as: Int.self).wait()
+                _ = cache.get(key: key, as: Int.self)
             }
             cache.set(key: key, to: i)
         }
         // 10 被使用了 11 次，1 被使用了两次，0 被使用一次
         // 再添加 0 将无法添加进，读取一次之后再添加，会将 1 挤出
         cache.set(key: "0", to: 0)
-        XCTAssertNil(try cache.get(key: "0", as: Int.self).wait())
+        #expect(cache.get(key: "0", as: Int.self) == nil)
         cache.set(key: "0", to: 0)
-        XCTAssertNotNil(try cache.get(key: "0", as: Int.self).wait())
-        XCTAssertNil(try cache.get(key: "1", as: Int.self).wait())
+        #expect(cache.get(key: "0", as: Int.self) != nil)
+        #expect(cache.get(key: "1", as: Int.self) == nil)
     }
     
+    @Test
     func testExpiredSpill() throws {
         
-        let cache = LFUCache(loop: self.loop, countLimit: 10, duration: 2)
+        let cache = LFUCache(countLimit: 10, duration: 2)
         for i in 0...4 {
             sleep(1)
             cache.set(key: "\(i)", to: i)
         }
         
         // 已经睡了 5 秒，0、1 应该已经过期了，2 刚刚过期，3、4 肯定未过期
-        XCTAssertNil(try cache.get(key: "0", as: Int.self).wait())
-        XCTAssertNil(try cache.get(key: "1", as: Int.self).wait())
-        XCTAssertNil(try cache.get(key: "2", as: Int.self).wait())
-        XCTAssertNotNil(try cache.get(key: "3", as: Int.self).wait())
-        XCTAssertNotNil(try cache.get(key: "4", as: Int.self).wait())
+        #expect(cache.get(key: "0", as: Int.self) == nil)
+        #expect(cache.get(key: "1", as: Int.self) == nil)
+        #expect(cache.get(key: "2", as: Int.self) == nil)
+        #expect(cache.get(key: "3", as: Int.self) != nil)
+        #expect(cache.get(key: "4", as: Int.self) != nil)
     }
     
-    
+    @Test
     func testDeleteLessUsedAndComeBack() throws {
         
-        let cache = LFUCache(loop: self.loop, countLimit: 5, duration: 1000)
+        let cache = LFUCache(countLimit: 5, duration: 1000)
         for i in 0...5 {
             let key = "\(i)"
             for _ in 0...i {
-                _ = try cache.get(key: key, as: Int.self).wait()
+                _ = cache.get(key: key, as: Int.self)
             }
             cache.set(key: key, to: i)
         }
         
         /// 最少使用的是 0 ，但是已经被自动删除，所以使用 1，被使用 2 次
         let deleteKey = "1"
-        cache.loop.execute {
-             XCTAssertEqual(cache.arrContent.lastNode?.key, deleteKey)
-        }
+
+        #expect(cache.arrContent.lastNode?.key == deleteKey)
+
         cache.delete(key: deleteKey)
-        cache.loop.execute {
-            XCTAssertEqual(cache.arrContent.lastNode?.key, "2")
-        }
-        XCTAssertNil(try cache.get(key: deleteKey, as: Int.self).wait())
+
+        #expect(cache.arrContent.lastNode?.key == "2")
+
+        #expect(cache.get(key: deleteKey, as: Int.self) == nil)
         cache.set(key: deleteKey, to: 1)
-        XCTAssertNotNil(try cache.get(key: deleteKey, as: Int.self).wait())
+        #expect(cache.get(key: deleteKey, as: Int.self) != nil)
     }
 
+    @Test
     func testDeleteMiddleUsedAndComeBack() throws {
         
-        let cache = LFUCache(loop: self.loop, countLimit: 5, duration: 1000)
+        let cache = LFUCache(countLimit: 5, duration: 1000)
         for i in 0...5 {
             let key = "\(i)"
             for _ in 0...i {
-                _ = try cache.get(key: key, as: Int.self).wait()
+                _ = cache.get(key: key, as: Int.self)
             }
             cache.set(key: key, to: i)
         }
@@ -148,19 +155,20 @@ final class LFUCacheTests: XCTestCase {
         /// 最少使用的是 0 ，但是已经被自动删除，所以使用 1，被使用 2 次
         let deleteKey = "3"
         cache.delete(key: deleteKey)
-        XCTAssertNil(try cache.get(key: deleteKey, as: Int.self).wait())
+        #expect(cache.get(key: deleteKey, as: Int.self) == nil)
         cache.set(key: deleteKey, to: 3)
-        XCTAssertNotNil(try cache.get(key: deleteKey, as: Int.self).wait())
+        #expect(cache.get(key: deleteKey, as: Int.self) != nil)
         
     }
     
+    @Test
     func testDeleteFrequencyUsedAndComeBack() throws {
         
-        let cache = LFUCache(loop: self.loop, countLimit: 5, duration: 1000)
+        let cache = LFUCache(countLimit: 5, duration: 1000)
         for i in 0...5 {
             let key = "\(i)"
             for _ in 0...i {
-                _ = try cache.get(key: key, as: Int.self).wait()
+                _ = cache.get(key: key, as: Int.self)
             }
             cache.set(key: key, to: i)
         }
@@ -168,30 +176,39 @@ final class LFUCacheTests: XCTestCase {
         /// 最少使用的是 0 ，但是已经被自动删除，所以使用 1，被使用 2 次
         let deleteKey = "5"
         cache.delete(key: deleteKey)
-        XCTAssertNil(try cache.get(key: deleteKey, as: Int.self).wait())
+        #expect(cache.get(key: deleteKey, as: Int.self) == nil)
         cache.set(key: deleteKey, to: 5)
-        XCTAssertNotNil(try cache.get(key: deleteKey, as: Int.self).wait())
-        XCTAssertNotNil(cache.dicContent[deleteKey])
-        XCTAssertNil(cache.dicContent[deleteKey]?.prev)
-        
+        #expect(cache.get(key: deleteKey, as: Int.self) != nil)
+        #expect(cache.dicContent[deleteKey] != nil)
+        #expect(cache.dicContent[deleteKey]?.prev == nil)
     }
     
+    @Test
     func testSetex() throws {
         
-        let cache = LFUCache(loop: self.loop, countLimit: 5, duration: 1000)
+        let cache = LFUCache(countLimit: 5, duration: 1000)
         
         let key = "1"
         let timeout = 2
         cache.setex(key: key, to: 1, in: timeout)
-        XCTAssertNotNil(try cache.get(key: key, as: Int.self).wait())
+        #expect(cache.get(key: key, as: Int.self) != nil)
         sleep(UInt32(timeout))
-        XCTAssertNil(try cache.get(key: key, as: Int.self).wait())
-        cache.loop.execute {
-             XCTAssertNil(cache.dicContent[key])
-        }
+        #expect(cache.get(key: key, as: Int.self) == nil)
+
+        #expect(cache.dicContent[key] == nil)
     }
     
-    static var allTests = [
-        ("testContentNodes", testContentNodes),
-    ]
+    @Test
+    func testGetAsync() throws {
+        
+        let cache = LFUCache(countLimit: 5, duration: 1000)
+        
+        let key = "key";
+        let value = 1;
+        cache.set(key: key, to: value);
+        
+        let result = cache.get(key: key, as: type(of: value));
+        
+        #expect(result == value);
+    }
 }
