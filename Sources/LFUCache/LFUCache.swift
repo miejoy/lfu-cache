@@ -9,21 +9,19 @@ import Foundation
 import NIO
 
 @globalActor
-public actor CacheActor: GlobalActor {
+public final actor CacheActor: GlobalActor {
     // 指定全局隔离域的载体：一个单例 Actor
     public static let shared: some Actor = CacheActor()
-}
-
-@CacheActor
-class Test {
-    
 }
 
 @CacheActor
 public class LFUCache: Sendable {
     
     /// count 记录，最多不会超过 countLimit * countRate^countRecordLevel  + countLimit * countRate^(countRecordLevel-1)  + ... + countLimit * countRate
-    static var countRate = 10
+    static nonisolated let countRate = 10
+    
+    /// 是否已初始化好
+    var isInitialized: Bool = false
         
     /// 最大缓存限制
     var countLimit : Int
@@ -46,7 +44,7 @@ public class LFUCache: Sendable {
     /// 一级最近记录
     var lastCountRecord : CountRecord
     
-    public init(countLimit: Int, duration: TimeInterval, countRecordLevel : Int = 3) {
+    public nonisolated init(countLimit: Int, duration: TimeInterval, countRecordLevel : Int = 3) {
         self.countLimit = countLimit
         self.duration = duration
         self.countRecordLevel = countRecordLevel >= 1 ? countRecordLevel : 3
@@ -61,10 +59,13 @@ public class LFUCache: Sendable {
             self.arrCountRecord.insert(aCountRecord, at: 0)
         }
         self.lastCountRecord = self.arrCountRecord.first!
-        self.config()
     }
     
-    func config() {
+    func configIfNeeded() {
+        if isInitialized {
+            return
+        }
+        isInitialized = true
         for index in 0..<(self.arrCountRecord.count-1) {
             let aCountRecord = self.arrCountRecord[index]
             let nextCountRecord = self.arrCountRecord[index+1]
@@ -89,6 +90,7 @@ public class LFUCache: Sendable {
     }
     
     public func setex(key: String, to value:Any, in timeout: Int) {
+        configIfNeeded()
         defer {
             // 这里加 count，主要是为了方便过期
             self.addCount(key: key, count: 0)
@@ -121,6 +123,7 @@ public class LFUCache: Sendable {
     // MARK: - Get
     
     public func get<T>(key: String, as type: T.Type = T.self) -> T? {
+        configIfNeeded()
         defer {
             // 添加计数
             self.addCount(key: key, count: 1)
@@ -140,6 +143,7 @@ public class LFUCache: Sendable {
     }
     
     public func delete(key: String) {
+        configIfNeeded()
         guard let node = self.dicContent[key] else {
             return
         }
@@ -331,7 +335,7 @@ public class LFUCache: Sendable {
         var fullDumpBlock : (([(Date, String, Int)]) -> Void)?
         var fullSpillBlock : (([(Date, String, Int)]) -> Void)?
         
-        init(limit: Int, duration: TimeInterval) {
+        nonisolated init(limit: Int, duration: TimeInterval) {
             self.limit = limit
             self.duration = duration
             self.createDate = Date()
