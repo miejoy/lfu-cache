@@ -11,7 +11,7 @@ import NIO
 @globalActor
 public actor CacheActor: GlobalActor {
     // 指定全局隔离域的载体：一个单例 Actor
-    public static var shared: some Actor = CacheActor()
+    public static let shared: some Actor = CacheActor()
 }
 
 @CacheActor
